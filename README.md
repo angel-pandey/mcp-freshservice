@@ -1,171 +1,165 @@
-# Freshservice MCP Server
+# mcp-freshservice
 
-[![smithery badge](https://smithery.ai/badge/@effytech/freshservice_mcp)](https://smithery.ai/server/@effytech/freshservice_mcp)
+A [Model Context Protocol](https://modelcontextprotocol.io/) server for the
+[Freshservice REST API v2](https://api.freshservice.com/). It lets an AI assistant work with tickets,
+changes, problems, releases, assets, requesters, agents, groups, the service catalog and the knowledge
+base.
 
-## Overview
+> Forked from [effytech/freshservice_mcp](https://github.com/effytech/freshservice_mcp) and reworked for
+> v2 (see [CHANGELOG.md](CHANGELOG.md) for breaking changes).
 
-A powerful MCP (Model Context Protocol) server implementation that seamlessly integrates with Freshservice, enabling AI models to interact with Freshservice modules and perform various IT service management operations. This integration bridge empowers your AI assistants to manage and resolve IT service tickets, streamlining your support workflow.
+## Quick start
 
-## Key Features
-
-- **Enterprise-Grade Freshservice Integration**: Direct, secure communication with Freshservice API endpoints
-- **AI Model Compatibility**: Enables Claude and other AI models to execute service desk operations through Freshservice
-- **Automated ITSM Management**: Efficiently handle ticket creation, updates, responses, and asset management
-- **Workflow Acceleration**: Reduce manual intervention in routine IT service tasks
-
-## Supported Freshservice Modules
-
-**This MCP server currently supports operations across a wide range of Freshservice modules**:
-
--  Tickets
--  Changes
--  Conversations
--  Products
--  Requesters
--  Agents
--  Agent Groups
--  Requester Groups
--  Canned Responses
--  Canned Response Folders
--  Workspaces
--  Solution Categories
--  Solution Folders
--  Solution Articles
-
-## Components & Tools
-
-The server provides a comprehensive toolkit for Freshservice operations:
-
-### Ticket Management
-
-| Tool | Description | Key Parameters |
-|------|-------------|----------------|
-| `create_ticket` | Create new service tickets | `subject`, `description`, `source`, `priority`, `status`, `email` |
-| `update_ticket` | Update existing tickets | `ticket_id`, `updates` |
-| `delete_ticket` | Remove tickets | `ticket_id` |
-| `filter_tickets` | Find tickets matching criteria | `query` |
-| `get_ticket_fields` | Retrieve ticket field definitions | None |
-| `get_tickets` | List all tickets with pagination | `page`, `per_page` |
-| `get_ticket_by_id` | Retrieve single ticket details | `ticket_id` |
-
-### Change Management
-
-| Tool | Description | Key Parameters |
-|------|-------------|----------------|
-| `get_changes` | List all changes with pagination | `page`, `per_page`, `query` |
-| `filter_changes` | Filter changes with advanced queries | `query`, `page`, `per_page` |
-| `get_change_by_id` | Retrieve single change details | `change_id` |
-| `create_change` | Create new change request | `requester_id`, `subject`, `description`, `priority`, `impact`, `status`, `risk`, `change_type` |
-| `update_change` | Update existing change | `change_id`, `change_fields` |
-| `close_change` | Close change with result explanation | `change_id`, `change_result_explanation` |
-| `delete_change` | Remove change | `change_id` |
-| `get_change_tasks` | Get tasks for a change | `change_id` |
-| `create_change_note` | Add note to change | `change_id`, `body` |
-
-#### 🚨 Important: Query Syntax for Filtering
-
-When using `get_changes` or `filter_changes` with the `query` parameter, **the query string must be wrapped in double quotes** for the Freshservice API to work correctly:
-
-✅ **CORRECT**: `"status:3"`, `"approval_status:1 AND status:<6"`  
-❌ **WRONG**: `status:3` (will cause 500 Internal Server Error)
-
-**Common Query Examples:**
-- `"status:3"` - Changes awaiting approval
-- `"approval_status:1"` - Approved changes  
-- `"approval_status:1 AND status:<6"` - Approved changes that are not closed
-- `"planned_start_date:>'2025-07-14'"` - Changes starting after specific date
-- `"status:3 AND priority:1"` - High priority changes awaiting approval
-
-## Getting Started
-
-### Installing via Smithery
-
-To install freshservice_mcp automatically via Smithery:
+You need a Freshservice API key (Profile Settings → API key) and your domain.
 
 ```bash
-npx -y @smithery/cli install @effytech/freshservice_mcp --client claude
+uvx mcp-freshservice --version
 ```
 
-### Prerequisites
-
-- A Freshservice account (sign up at [freshservice.com](https://www.freshservice.com))
-- Freshservice API key
-- `uvx` installed (`pip install uv` or `brew install uv`)
-
-### Configuration
-
-1. Generate your Freshservice API key from the admin panel:
-   - Navigate to Profile Settings → API Settings
-   - Copy your API key for configuration
-
-2. Set up your domain and authentication details as shown below
-
-### Usage with Claude Desktop
-
-1. Install Claude Desktop from the [official website](https://claude.ai/desktop)
-2. Add the following configuration to your `claude_desktop_config.json`:
+Claude Desktop / any MCP client (`claude_desktop_config.json`):
 
 ```json
-"mcpServers": {
-  "freshservice-mcp": {
-    "command": "uvx",
-    "args": [
-        "freshservice-mcp"
-    ],
-    "env": {
-      "FRESHSERVICE_APIKEY": "<YOUR_FRESHSERVICE_APIKEY>",
-      "FRESHSERVICE_DOMAIN": "<YOUR_FRESHSERVICE_DOMAIN>"
+{
+  "mcpServers": {
+    "freshservice": {
+      "command": "uvx",
+      "args": ["mcp-freshservice"],
+      "env": {
+        "FRESHSERVICE_DOMAIN": "yourcompany.freshservice.com",
+        "FRESHSERVICE_APIKEY": "<your-api-key>"
+      }
     }
   }
 }
 ```
-**Important**: Replace `<YOUR_FRESHSERVICE_APIKEY>` with your actual API key and `<YOUR_FRESHSERVICE_DOMAIN>` with your domain (e.g., `yourcompany.freshservice.com`)
 
-## Example Operations
+Claude Code: `claude mcp add freshservice -e FRESHSERVICE_DOMAIN=yourcompany.freshservice.com -e FRESHSERVICE_APIKEY=... -- uvx mcp-freshservice`
 
-Once configured, you can ask Claude to perform operations like:
+## Configuration
 
-**Tickets:**
-- "Create a new incident ticket with subject 'Network connectivity issue in Marketing department' and description 'Users unable to connect to Wi-Fi in Marketing area', set priority to high"
-- "List all critical incidents reported in the last 24 hours"
-- "Update ticket #12345 status to resolved"
+| Variable | Required | Description |
+|---|---|---|
+| `FRESHSERVICE_DOMAIN` | yes | `yourcompany.freshservice.com` (a bare `yourcompany` also works) |
+| `FRESHSERVICE_APIKEY` | yes | API key of the agent the server acts as. Permissions follow that agent |
+| `FRESHSERVICE_WORKSPACE_ID` | no | Default `workspace_id` for calls on multi-workspace accounts. A tool's own `workspace_id` argument wins |
+| `FRESHSERVICE_READ_ONLY` | no | `1` exposes only read-only tools |
+| `FRESHSERVICE_TOOLSETS` | no | Which toolsets to expose: names, `default` (the core set, used when unset) and/or `all`. See [Choosing tools](#choosing-tools) |
+| `FRESHSERVICE_TIMEOUT` | no | HTTP timeout in seconds (default 30) |
+| `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT` | no | `stdio` (default), `streamable-http` or `sse` |
 
-**Changes:**
-- "Create a change request for scheduled server maintenance next Tuesday at 2 AM"
-- "Update the status of change request #45678 to 'Approved'"
-- "Close change #5092 with result explanation 'Successfully deployed to production. All tests passed.'"
-- "List all pending changes"
+The same switches exist as flags: `--read-only`, `--toolsets tickets,solutions`, `--transport`.
 
-**Other Operations:**
-- "Show asset details for laptop with asset tag 'LT-2023-087'"
-- "Create a solution article about password reset procedures"
+### Choosing tools
 
-## Testing
-
-For testing purposes, you can start the server manually:
+The server can expose 204 tools (full list in [TOOLS.md](TOOLS.md)), but some clients cap the tools per agent
+(for example 128) and models choose better from a shorter list. So **by default only a 76-tool core set is
+enabled**; everything else is opt-in by toolset.
 
 ```bash
-uvx freshservice-mcp --env FRESHSERVICE_APIKEY=<your_api_key> --env FRESHSERVICE_DOMAIN=<your_domain>
+uvx mcp-freshservice --list-toolsets                         # see what's available
+uvx mcp-freshservice --toolsets default,changes,assets       # core set + changes + assets
+uvx mcp-freshservice --toolsets all                          # everything
+uvx mcp-freshservice --toolsets tickets,solutions --read-only
 ```
 
-## Troubleshooting
+The same works with `FRESHSERVICE_TOOLSETS=default,changes` in the client's `env`. A list of plain names is
+exact (only those toolsets); add `default` to keep the core set.
 
-- Verify your Freshservice API key and domain are correct
-- Ensure proper network connectivity to Freshservice servers
-- Check API rate limits and quotas
-- Verify the `uvx` command is available in your PATH
+| Toolset | Default | Tools | Covers |
+|---|:-:|---:|---|
+| `tickets` | yes | 17 | tickets, replies and notes (with attachments), conversations, child tickets, requested items |
+| `ticket_time_entries` | yes | 5 | time logged on tickets |
+| `ticket_tasks` | | 5 | ticket tasks |
+| `ticket_approvals` | | 9 | service-request approval groups and approvals |
+| `requesters` | yes | 9 | requesters, fields, reactivate, convert to agent |
+| `agents` | yes | 9 | agents, fields, roles |
+| `groups` | yes | 13 | agent groups, requester groups and membership |
+| `solutions` | yes | 18 | knowledge-base categories, folders, articles, search |
+| `service_catalog` | yes | 5 | browse/search items, place service requests |
+| `changes` | | 9 | change requests and planning fields |
+| `change_notes`, `change_tasks`, `change_time_entries` | | 5 each | notes, tasks, time entries on changes |
+| `change_approvals` | | 9 | change approval groups, chains, approvals |
+| `problems`, `releases` | | 8, 7 | problem and release records |
+| `problem_*`, `release_*` (`notes`, `tasks`, `time_entries`) | | 5 each | notes, tasks, time entries |
+| `assets` | | 16 | assets, asset types, canned responses |
+| `organisation` | | 20 | workspaces, departments, locations, vendors, products |
 
+Every tool is annotated read-only / destructive so clients can auto-approve safely.
+
+## Conventions
+
+- **Single records** come back as Freshservice returns them: `{"ticket": {...}}`.
+- **Lists** return one page plus `pagination: {page, per_page, next_page, has_more}`. `per_page` is at most 100.
+- **Errors** are real MCP tool errors (`isError: true`) carrying Freshservice's message and field errors,
+  with hints for 401/403/404/429.
+- **Filtering**: see [Query syntax](#query-syntax).
+- **Numeric codes**: ticket status 2 Open, 3 Pending, 4 Resolved, 5 Closed; priority 1 Low … 4 Urgent;
+  source 1 Email, 2 Portal, 3 Phone, 4 Chat … (see `list_ticket_sources` for the full list).
+- **Attachments**: `send_ticket_reply`, `create_ticket_note`, `create_ticket` and
+  `update_ticket_conversation` accept local file paths (max 15 files / 40 MB).
+
+Example prompts: "Show ticket 12031 with its conversations and resolution notes", "How much time was
+logged on ticket 8?", "List open P1 incidents unassigned for a day", "Search the KB for printer setup".
+
+## Query syntax
+
+`filter_tickets`, `filter_changes`, `filter_requesters`, `filter_agents` and the `query` / `filter` / `search`
+arguments of the list tools use Freshservice's query language. Freshservice requires the whole query to be
+**enclosed in a pair of double quotes** (without them the API answers `500`), so the server adds them for you;
+you can pass `status:3` or `"status:3"` and get the same request.
+
+| Rule | Example |
+|---|---|
+| Fields are snake_case and case-sensitive (custom fields by API name) | `status:3` |
+| Numbers bare, strings and dates in **single** quotes | `tag:'vip'`, `planned_start_date:>'2025-07-14'` |
+| `AND`, `OR` and parentheses | `(group_id:12 OR group_id:15) AND status:3` |
+| `:>` / `:<` are **inclusive** (>= and <=), confirmed on a live account | `status:<5` means status 5 or lower |
+| `null` finds empty values | `agent_id:null` |
+| Starts-with (requesters and agents only) | `~[first_name\|last_name]:'ad'` |
+| Max 512 characters (checked locally); filter results are 30 per page | |
+
+Changes: `"status:3"` awaiting approval, `"approval_status:1"` approved,
+`"approval_status:1 AND status:<5"` approved and not closed (status 6 is Closed, and `:<` includes its boundary, so `<6` would include closed changes), `"status:3 AND priority:1"`. `approval_status`
+is 0 Requested, 1 Approved, 2 Rejected, 3 Not requested. A change `view` and `query` cannot be combined.
+
+Not every endpoint supports every field: departments and locations filter on `name` only; asset `search`
+takes one field (`name`, `asset_tag`, `serial_number`, ...); releases only have predefined `filter_name`
+values. The per-tool descriptions list the supported fields. Filtered requester/agent pages are capped at 40;
+changes to users can take a few minutes to be indexed.
+
+## Running remotely
+
+```bash
+MCP_TRANSPORT=streamable-http MCP_PORT=8000 uvx mcp-freshservice
+```
+
+The server is stateless over streamable HTTP and serves `/mcp`. It has **no authentication of its own**:
+run it behind a gateway/reverse proxy that authenticates callers, because everyone who can reach it acts
+with the configured API key.
+
+## Development
+
+```bash
+uv sync
+uv run pytest        # offline, mocks the Freshservice API
+uv run ruff check .
+```
+
+To check the server against a real Freshservice account (read-only by default; never prints your key):
+
+```bash
+uv run python scripts/live_check.py
+```
+
+When you point an MCP client at a local checkout with `uvx --from <folder> mcp-freshservice`, uvx reuses a
+cached build and will not notice your code changes (`--refresh` does not help). Add `--no-cache` to the uvx
+arguments while developing, e.g. `"args": ["--no-cache", "--from", "G:/path/to/mcp-freshservice", "mcp-freshservice"]`.
+
+Tests call tools through FastMCP's real `call_tool` path against a mocked API, so output-schema problems
+(like the old `get_ticket_by_id` failure) are caught without credentials. Each tool module lives in
+`src/mcp_freshservice/tools/`; add tools with `@ts.tool(title, kind)` and they are registered, filtered and
+annotated automatically.
 
 ## License
 
-This MCP server is licensed under the MIT License. See the LICENSE file in the project repository for full details.
-
-## Additional Resources
-
-- [Freshservice API Documentation](https://api.freshservice.com/)
-- [Claude Desktop Integration Guide](https://docs.anthropic.com/claude/docs/claude-desktop)
-- [MCP Protocol Specification](https://modelcontextprotocol.io/)
-
----
-
-<p align="center">Built with ❤️ by effy</p>
+MIT, see [LICENSE](LICENSE).
