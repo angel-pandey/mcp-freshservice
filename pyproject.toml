@@ -1,28 +1,72 @@
 [project]
-name = "freshservice-mcp"
-version = "1.0.0"
-description = "An MCP server for Freshservice"
+name = "mcp-freshservice"
+version = "2.0.0"
+description = "A Model Context Protocol (MCP) server for the Freshservice ITSM API v2"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
+keywords = ["mcp", "model-context-protocol", "freshservice", "itsm", "helpdesk", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
-    "build>=1.2.2.post1",
-    "httpx==0.28.1",
-    "mcp[cli]>=1.3.0",
-    "pydantic>=2.10.6",
+    "httpx>=0.28.1,<1",
+    "mcp[cli]>=1.30.0,<2",
+    "pydantic>=2.11,<3",
+    "python-dotenv>=1.0",
 ]
 
 [[project.authors]]
+name = "Angel Pandey"
+
+[[project.authors]]
 name = "Gopi Krishnan"
-email = "gopi@effy.co.in"
 
 [[project.authors]]
 name = "Maanaesh Swamy"
-email = "maanaesh.s@effy.co.in"
 
 [[project.authors]]
 name = "Vijay Ragunath"
-email = "vijay.r@effy.co.in"
+
+[project.urls]
+Homepage = "https://github.com/angel-pandey/mcp-freshservice"
+Repository = "https://github.com/angel-pandey/mcp-freshservice"
+Issues = "https://github.com/angel-pandey/mcp-freshservice/issues"
+"Freshservice API" = "https://api.freshservice.com/"
 
 [project.scripts]
-freshservice-mcp = "freshservice_mcp.server:main"
+mcp-freshservice = "mcp_freshservice.server:main"
 
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_freshservice"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mcp_freshservice", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "anyio>=4",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
