@@ -13,6 +13,12 @@ Write checks (optional) create ONE throwaway ticket, add a private note and dele
 email the requester, so use your own address:
     uv run python scripts/live_check.py --write --email you@yourcompany.com
 
+Sweep (optional, read-only): call EVERY read-only tool of every toolset once, using real IDs it finds along the
+way. It proves each endpoint exists on your account, which the normal run does not (it only covers the core
+tools). Empty lists and HTTP 403 (not on your plan / no permission) are reported as SKIP, not as failures:
+    uv run python scripts/live_check.py --sweep
+    uv run python scripts/live_check.py --sweep --verbose        # also list every PASS
+
 The API key is read from the environment and is never printed.
 """
 
@@ -37,6 +43,7 @@ class Outcome:
     name: str
     ok: bool
     detail: str
+    skipped: bool = False  # not run or not applicable here: neither a pass nor a failure
 
 
 async def call(session: ClientSession, tool: str, args: dict | None = None) -> tuple[bool, dict, str]:
@@ -289,9 +296,164 @@ async def run_checks(
     return run.outcomes
 
 
+SCOPES = ("ticket", "change", "problem", "release")
+SUB_PARAMS = ("note_id", "task_id", "time_entry_id", "approval_id", "approval_group_id")
+ID_PARAMS = {
+    "ticket_id",
+    "change_id",
+    "problem_id",
+    "release_id",
+    "agent_id",
+    "requester_id",
+    "group_id",
+    "requester_group_id",
+    "department_id",
+    "location_id",
+    "vendor_id",
+    "product_id",
+    "workspace_id",
+    "asset_type_id",
+    "category_id",
+    "article_id",
+    "canned_response_id",
+}
+
+# Required arguments that are not IDs.
+DEFAULT_ARGS: dict[str, dict[str, Any]] = {
+    "filter_tickets": {"query": "status:2"},
+    "filter_changes": {"query": "priority:>1"},
+    "filter_agents": {"query": "~[first_name|last_name]:'a'"},
+    "filter_requesters": {"query": "~[first_name|last_name]:'a'"},
+    "search_solution_articles": {"search_term": "the"},
+    "search_service_items": {"search_term": "a"},
+}
+
+# list tool -> (key of the list in its response, name to remember the first id under, field holding the id)
+HARVEST: dict[str, tuple[str, str, str]] = {
+    "get_tickets": ("tickets", "ticket_id", "id"),
+    "get_changes": ("changes", "change_id", "id"),
+    "get_problems": ("problems", "problem_id", "id"),
+    "get_releases": ("releases", "release_id", "id"),
+    "get_assets": ("assets", "asset_display_id", "display_id"),
+    "list_asset_types": ("asset_types", "asset_type_id", "id"),
+    "list_departments": ("departments", "department_id", "id"),
+    "list_locations": ("locations", "location_id", "id"),
+    "list_vendors": ("vendors", "vendor_id", "id"),
+    "get_all_products": ("products", "product_id", "id"),
+    "list_all_workspaces": ("workspaces", "workspace_id", "id"),
+    "get_all_agent_groups": ("groups", "group_id", "id"),
+    "get_all_requester_groups": ("requester_groups", "requester_group_id", "id"),
+    "get_all_agents": ("agents", "agent_id", "id"),
+    "get_all_requesters": ("requesters", "requester_id", "id"),
+    "get_all_canned_response": ("canned_responses", "canned_response_id", "id"),
+    "list_all_canned_response_folder": ("canned_response_folders", "canned_folder_id", "id"),
+    "get_all_solution_category": ("categories", "category_id", "id"),
+    "get_list_of_solution_folder": ("folders", "folder_id", "id"),
+    "get_list_of_solution_article": ("articles", "article_id", "id"),
+    "list_service_items": ("service_items", "service_display_id", "display_id"),
+}
+for _scope in SCOPES:
+    for _facet, _param in (
+        ("notes", "note_id"),
+        ("tasks", "task_id"),
+        ("time_entries", "time_entry_id"),
+        ("approval_groups", "approval_group_id"),
+        ("approvals", "approval_id"),
+    ):
+        HARVEST[f"list_{_scope}_{_facet}"] = (_facet, f"{_scope}_{_param}", "id")
+
+
+def context_key(tool: str, param: str) -> str | None:
+    """Which remembered id satisfies this required parameter of this tool?"""
+    if param in ID_PARAMS:
+        return param
+    if param == "display_id":
+        return "service_display_id" if "service_item" in tool else "asset_display_id"
+    if param == "folder_id":
+        return "canned_folder_id" if "canned" in tool else "folder_id"
+    if param in SUB_PARAMS:
+        scope = next((s for s in SCOPES if f"_{s}_" in tool), None)
+        return f"{scope}_{param}" if scope else None
+    return None
+
+
+async def run_sweep(session: ClientSession, *, verbose: bool = False, pause: float = 0.25) -> list[Outcome]:
+    """Call every read-only tool once. IDs come from earlier list calls, so tools run in dependency order."""
+    tools = {t.name: t for t in (await session.list_tools()).tools}
+    remembered: dict[str, Any] = {}
+    outcomes: list[Outcome] = []
+    pending = sorted(tools)
+    print(f"Sweeping {len(pending)} read-only tools...\n")
+
+    def report(outcome: Outcome) -> None:
+        outcomes.append(outcome)
+        if verbose or not outcome.ok or outcome.skipped:
+            label = "SKIP" if outcome.skipped else "PASS" if outcome.ok else "FAIL"
+            print(f"{label}  {outcome.name}" + (f"  -  {outcome.detail}" if outcome.detail else ""))
+
+    def build_args(name: str) -> tuple[dict[str, Any], list[str]]:
+        schema = tools[name].inputSchema
+        args = dict(DEFAULT_ARGS.get(name, {}))
+        missing = []
+        for param in schema.get("required", []):
+            if param in args:
+                continue
+            key = context_key(name, param)
+            if key in remembered:
+                args[param] = remembered[key]
+            else:
+                missing.append(key or param)
+        if "per_page" in schema.get("properties", {}):
+            args.setdefault("per_page", 1)  # keep the sweep light
+        return args, missing
+
+    def harvest(name: str, data: dict) -> None:
+        spec = HARVEST.get(name)
+        if not spec:
+            return
+        key, remember_as, field = spec
+        items = data.get(key)
+        if (
+            isinstance(items, list)
+            and items
+            and isinstance(items[0], dict)
+            and items[0].get(field) is not None
+        ):
+            remembered.setdefault(remember_as, items[0][field])
+
+    progress = True
+    while pending and progress:
+        progress = False
+        for name in list(pending):
+            args, missing = build_args(name)
+            if missing:
+                continue
+            pending.remove(name)
+            progress = True
+            ok, data, text = await call(session, name, args)
+            if ok:
+                harvest(name, data)
+                report(Outcome(name, True, ""))
+            elif "HTTP 403" in text:
+                report(Outcome(name, True, "HTTP 403: no permission, or not part of this plan", skipped=True))
+            else:
+                report(Outcome(name, False, short(text, 220)))
+            if pause:
+                await asyncio.sleep(pause)
+    for name in pending:
+        _, missing = build_args(name)
+        report(
+            Outcome(name, True, f"no sample {', '.join(missing)} on this account (empty list)", skipped=True)
+        )
+    return outcomes
+
+
 def summarise(outcomes: list[Outcome]) -> int:
     failed = [o for o in outcomes if not o.ok]
-    print(f"\n{len(outcomes) - len(failed)}/{len(outcomes)} checks passed")
+    skipped = [o for o in outcomes if o.skipped]
+    ran = len(outcomes) - len(skipped)
+    passed = ran - len(failed)
+    print(f"\n{passed}/{ran} checks passed" + (f" ({len(skipped)} skipped)" if skipped else ""))
     if failed:
         print("Failed: " + "; ".join(o.name for o in failed))
         print("Send me the FAIL lines above (never your API key).")
@@ -305,13 +467,20 @@ async def main(args: argparse.Namespace) -> int:
     else:
         env["FRESHSERVICE_READ_ONLY"] = "1"
     env.pop("FRESHSERVICE_TOOLSETS", None)  # test the default set
+    if args.sweep:
+        env["FRESHSERVICE_TOOLSETS"] = "all"
+        env["FRESHSERVICE_READ_ONLY"] = "1"
     params = StdioServerParameters(command=sys.executable, args=["-m", "mcp_freshservice"], env=env)
-    print(f"Testing {env['FRESHSERVICE_DOMAIN']} ({'read/write' if args.write else 'read-only'})\n")
+    mode = "sweep of every read-only tool" if args.sweep else "read/write" if args.write else "read-only"
+    print(f"Testing {env['FRESHSERVICE_DOMAIN']} ({mode})\n")
     async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
-        outcomes = await run_checks(
-            session, ticket_id=args.ticket_id, write_email=args.email if args.write else None
-        )
+        if args.sweep:
+            outcomes = await run_sweep(session, verbose=args.verbose)
+        else:
+            outcomes = await run_checks(
+                session, ticket_id=args.ticket_id, write_email=args.email if args.write else None
+            )
     return summarise(outcomes)
 
 
@@ -324,7 +493,13 @@ def parse_args() -> argparse.Namespace:
         "--write", action="store_true", help="also create, annotate and delete one test ticket"
     )
     parser.add_argument("--email", help="requester email for the test ticket (required with --write)")
+    parser.add_argument(
+        "--sweep", action="store_true", help="call every read-only tool of every toolset (read-only)"
+    )
+    parser.add_argument("--verbose", action="store_true", help="with --sweep, also list every PASS")
     args = parser.parse_args()
+    if args.sweep and args.write:
+        parser.error("--sweep is read-only and cannot be combined with --write")
     if args.write and not args.email:
         parser.error("--write needs --email (the test ticket's requester; use your own address)")
     for var in ("FRESHSERVICE_DOMAIN", "FRESHSERVICE_APIKEY"):

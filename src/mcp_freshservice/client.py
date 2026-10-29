@@ -9,9 +9,12 @@ exposes Link-header pagination in a consistent shape.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import mimetypes
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -22,7 +25,15 @@ from mcp.server.fastmcp.exceptions import ToolError
 from . import __version__
 from .config import Settings
 
+logger = logging.getLogger("mcp_freshservice")
+
 MAX_PER_PAGE = 100
+# Freshservice rate-limits per minute and answers 429 + Retry-After. A rate-limited request was not
+# processed, so it is safe to resend whatever the method; gateway errors are only retried for GET.
+RETRY_ANY_METHOD = {429}
+RETRY_SAFE_METHODS = {"GET", "HEAD"}
+RETRY_GATEWAY = {502, 503, 504}
+MAX_RETRY_WAIT = 20.0  # never sleep longer than this for one retry; surface the error instead
 MAX_ATTACHMENTS = 15
 MAX_ATTACHMENT_BYTES = 40 * 1024 * 1024
 
@@ -112,17 +123,40 @@ def check_page(page: int, per_page: int) -> None:
         raise ToolError(f"per_page must be between 1 and {MAX_PER_PAGE}")
 
 
-def load_attachments(paths: list[str] | str | None) -> list[tuple[str, tuple[str, bytes, str]]]:
-    """Read local files into httpx multipart tuples (``attachments[]`` parts)."""
+ATTACHMENTS_DISABLED = (
+    "Attachments are disabled. Set FRESHSERVICE_ATTACHMENT_DIRS to the folder(s) this server may read "
+    "files from (separate several with ';' on Windows or ':' elsewhere) and restart it."
+)
+
+
+def load_attachments(
+    paths: list[str] | str | None, allowed_dirs: tuple[Path, ...] = ()
+) -> list[tuple[str, tuple[str, bytes, str]]]:
+    """Read local files into httpx multipart tuples (``attachments[]`` parts).
+
+    Only files inside ``allowed_dirs`` are read, after resolving symlinks and ``..``. With no allowed
+    folders configured attachments are off, so a prompt-injected path such as ``~/.ssh/id_rsa`` can never be
+    uploaded. Paths outside the allowed folders get the same answer whether or not they exist.
+    """
     if not paths:
         return []
+    if not allowed_dirs:
+        raise ToolError(ATTACHMENTS_DISABLED)
     if isinstance(paths, str):
         paths = [paths]
     if len(paths) > MAX_ATTACHMENTS:
         raise ToolError(f"At most {MAX_ATTACHMENTS} attachments are allowed")
     files, total = [], 0
     for raw in paths:
-        path = Path(os.path.expanduser(raw))
+        try:
+            path = Path(os.path.expanduser(raw)).resolve()
+        except (OSError, RuntimeError, ValueError):
+            raise ToolError(f"Attachment path is not valid: {raw}") from None
+        if not any(path.is_relative_to(folder) for folder in allowed_dirs):
+            raise ToolError(
+                f"Attachment {raw} is outside the folders allowed by FRESHSERVICE_ATTACHMENT_DIRS; "
+                "refusing to read it."
+            )
         if not path.is_file():
             raise ToolError(f"Attachment not found: {raw}")
         content = path.read_bytes()
@@ -154,10 +188,31 @@ def to_form(payload: dict[str, Any]) -> dict[str, str | list[str]]:
     return fields
 
 
+def retry_delay(response: httpx.Response, method: str, attempt: int) -> float | None:
+    """Seconds to wait before resending, or None if this response should not be retried."""
+    status = response.status_code
+    retryable = status in RETRY_ANY_METHOD or (
+        status in RETRY_GATEWAY and method.upper() in RETRY_SAFE_METHODS
+    )
+    if not retryable:
+        return None
+    try:
+        delay = float(response.headers["Retry-After"])
+    except (KeyError, ValueError):
+        delay = float(min(2**attempt, 8))  # 1s, 2s, 4s, 8s...
+    return delay if 0 <= delay <= MAX_RETRY_WAIT else None
+
+
 class FreshserviceClient:
-    def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ):
         self.settings = settings
         self._transport = transport
+        self._sleep = sleep
         self._http: httpx.AsyncClient | None = None
 
     @property
@@ -206,12 +261,28 @@ class FreshserviceClient:
             kwargs["files"] = files
         elif json_body is not None:
             kwargs["json"] = json_body
-        try:
-            response = await self.http.request(method, path, **kwargs)
-        except httpx.TimeoutException as exc:
-            raise ToolError(f"Timed out calling Freshservice {method} {path}") from exc
-        except httpx.HTTPError as exc:
-            raise ToolError(f"Could not reach Freshservice ({self.settings.domain}): {exc}") from exc
+        attempt = 0
+        while True:
+            try:
+                response = await self.http.request(method, path, **kwargs)
+            except httpx.TimeoutException as exc:
+                raise ToolError(f"Timed out calling Freshservice {method} {path}") from exc
+            except httpx.HTTPError as exc:
+                raise ToolError(f"Could not reach Freshservice ({self.settings.domain}): {exc}") from exc
+            delay = retry_delay(response, method, attempt) if response.is_error else None
+            if delay is None or attempt >= self.settings.max_retries:
+                break
+            attempt += 1
+            logger.warning(
+                "Freshservice returned HTTP %s for %s %s; retrying in %.1fs (retry %d of %d)",
+                response.status_code,
+                method,
+                path,
+                delay,
+                attempt,
+                self.settings.max_retries,
+            )
+            await self._sleep(delay)
         if response.is_error:
             try:
                 body: Any = response.json()
@@ -245,7 +316,7 @@ class FreshserviceClient:
         self, method: str, path: str, payload: dict[str, Any], attachments: list[str] | str | None
     ) -> dict[str, Any]:
         """Send JSON, or multipart/form-data when there are attachments."""
-        files = load_attachments(attachments)
+        files = load_attachments(attachments, self.settings.attachment_dirs)
         if files:
             return await self.request(method, path, form=to_form(payload), files=files)
         return await self.request(method, path, json_body=clean(payload))

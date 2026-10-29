@@ -14,3 +14,5 @@ jobs:
       - run: uv run ruff check .
       - run: uv run pytest
       - run: uv build
+      # the version in pyproject.toml must have a CHANGELOG.md section
+      - run: uv run python scripts/check_release.py --current

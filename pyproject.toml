@@ -1,6 +1,6 @@
 [project]
 name = "mcp-freshservice"
-version = "2.0.0"
+version = "2.1.0"
 description = "A Model Context Protocol (MCP) server for the Freshservice ITSM API v2"
 readme = "README.md"
 license = "MIT"

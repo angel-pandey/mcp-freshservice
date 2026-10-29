@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 TRUTHY = {"1", "true", "yes", "on"}
 
@@ -20,6 +21,18 @@ def normalize_domain(value: str) -> str:
     return domain
 
 
+def _dirs(value: str | None) -> tuple[Path, ...]:
+    """Parse FRESHSERVICE_ATTACHMENT_DIRS (os.pathsep separated) into resolved absolute folders."""
+    if not value:
+        return ()
+    folders = []
+    for part in value.split(os.pathsep):
+        part = part.strip().strip('"')
+        if part:
+            folders.append(Path(os.path.expanduser(part)).resolve())
+    return tuple(folders)
+
+
 def _split(value: str | None) -> frozenset[str]:
     if not value:
         return frozenset()
@@ -34,6 +47,10 @@ class Settings:
     timeout: float = 30.0
     read_only: bool = False
     toolsets: frozenset[str] = field(default_factory=frozenset)
+    # Folders the server may read attachments from. Empty = attachments are disabled.
+    attachment_dirs: tuple[Path, ...] = ()
+    # How often to retry a rate-limited (429) or temporarily failing (502/503/504 on GET) request.
+    max_retries: int = 3
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -45,4 +62,6 @@ class Settings:
             timeout=float(os.getenv("FRESHSERVICE_TIMEOUT", "30")),
             read_only=os.getenv("FRESHSERVICE_READ_ONLY", "").strip().lower() in TRUTHY,
             toolsets=_split(os.getenv("FRESHSERVICE_TOOLSETS")),
+            attachment_dirs=_dirs(os.getenv("FRESHSERVICE_ATTACHMENT_DIRS")),
+            max_retries=max(0, int(os.getenv("FRESHSERVICE_MAX_RETRIES", "3"))),
         )

@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.1.0
+
+### Security
+- **Attachments are restricted to folders you choose, and are off until you choose one.** Set
+  `FRESHSERVICE_ATTACHMENT_DIRS` (several folders: separate with `;` on Windows, `:` elsewhere). In 2.0.0 the
+  reply, note and ticket tools would read any local path they were given, so a prompt injected through ticket
+  text could have attached a sensitive file (an SSH key, a credentials file) to an outgoing message. Paths are
+  resolved before checking, so `..` and symlinks cannot escape the allowed folders, and a path outside them
+  gets the same answer whether or not it exists.
+
+### Added
+- Automatic retry when Freshservice rate-limits a request (HTTP 429, any method, honouring `Retry-After` up to
+  20 seconds) and for transient 502/503/504 on reads. `FRESHSERVICE_MAX_RETRIES` sets the count (default 3, `0`
+  turns it off). Retries are logged to stderr.
+- `scripts/live_check.py --sweep`: calls every read-only tool of every toolset against your account, using real
+  IDs it finds along the way. A wrong endpoint is a failure; an empty list or HTTP 403 is a skip.
+- Release guard: the publish workflow refuses to upload when the git tag, the version in `pyproject.toml` and
+  the changelog disagree, and runs lint and the tests first. CI checks that the current version has a
+  changelog section.
+
+### Upgrade notes
+- If you attach files, set `FRESHSERVICE_ATTACHMENT_DIRS` to the folder(s) they live in, otherwise those tools
+  report that attachments are disabled.
+
 ## 2.0.0
 
 Published as **`mcp-freshservice`** (was `freshservice-mcp`); run it with `uvx mcp-freshservice`.

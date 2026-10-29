@@ -45,6 +45,8 @@ Claude Code: `claude mcp add freshservice -e FRESHSERVICE_DOMAIN=yourcompany.fre
 | `FRESHSERVICE_READ_ONLY` | no | `1` exposes only read-only tools |
 | `FRESHSERVICE_TOOLSETS` | no | Which toolsets to expose: names, `default` (the core set, used when unset) and/or `all`. See [Choosing tools](#choosing-tools) |
 | `FRESHSERVICE_TIMEOUT` | no | HTTP timeout in seconds (default 30) |
+| `FRESHSERVICE_ATTACHMENT_DIRS` | no | Folder(s) the server may read attachments from (`;` between several on Windows, `:` elsewhere). **Attachments are off until set** |
+| `FRESHSERVICE_MAX_RETRIES` | no | Retries after a rate limit (429) or a transient 502/503/504 on reads (default 3, `0` disables) |
 | `MCP_TRANSPORT`, `MCP_HOST`, `MCP_PORT` | no | `stdio` (default), `streamable-http` or `sse` |
 
 The same switches exist as flags: `--read-only`, `--toolsets tickets,solutions`, `--transport`.
@@ -96,7 +98,9 @@ Every tool is annotated read-only / destructive so clients can auto-approve safe
 - **Numeric codes**: ticket status 2 Open, 3 Pending, 4 Resolved, 5 Closed; priority 1 Low … 4 Urgent;
   source 1 Email, 2 Portal, 3 Phone, 4 Chat … (see `list_ticket_sources` for the full list).
 - **Attachments**: `send_ticket_reply`, `create_ticket_note`, `create_ticket` and
-  `update_ticket_conversation` accept local file paths (max 15 files / 40 MB).
+  `update_ticket_conversation` accept local file paths (max 15 files / 40 MB), but only from folders listed in
+  `FRESHSERVICE_ATTACHMENT_DIRS`. Until you set it, attachments are refused, so a prompt-injected path can't
+  upload an arbitrary local file.
 
 Example prompts: "Show ticket 12031 with its conversations and resolution notes", "How much time was
 logged on ticket 8?", "List open P1 incidents unassigned for a day", "Search the KB for printer setup".
@@ -127,6 +131,14 @@ takes one field (`name`, `asset_tag`, `serial_number`, ...); releases only have 
 values. The per-tool descriptions list the supported fields. Filtered requester/agent pages are capped at 40;
 changes to users can take a few minutes to be indexed.
 
+## Rate limits
+
+Freshservice limits requests per minute. When it answers HTTP 429 the server waits for the `Retry-After`
+time (up to 20 seconds) and tries again, up to `FRESHSERVICE_MAX_RETRIES` times; transient 502/503/504 errors
+on reads are retried the same way. If the wait would be longer than 20 seconds, or retries run out, the tool
+reports the rate-limit error instead. Writes are only ever retried after a 429, because a request that was
+rate-limited was not processed.
+
 ## Running remotely
 
 ```bash
@@ -148,8 +160,12 @@ uv run ruff check .
 To check the server against a real Freshservice account (read-only by default; never prints your key):
 
 ```bash
-uv run python scripts/live_check.py
+uv run python scripts/live_check.py            # the core tools, read-only
+uv run python scripts/live_check.py --sweep    # every read-only tool of every toolset
 ```
+
+The sweep calls each read-only tool once, using real IDs it finds along the way. A wrong endpoint shows up as
+a failure; an empty list or a 403 (module not on your plan, or no permission) is a skip.
 
 When you point an MCP client at a local checkout with `uvx --from <folder> mcp-freshservice`, uvx reuses a
 cached build and will not notice your code changes (`--refresh` does not help). Add `--no-cache` to the uvx
@@ -159,6 +175,16 @@ Tests call tools through FastMCP's real `call_tool` path against a mocked API, s
 (like the old `get_ticket_by_id` failure) are caught without credentials. Each tool module lives in
 `src/mcp_freshservice/tools/`; add tools with `@ts.tool(title, kind)` and they are registered, filtered and
 annotated automatically.
+
+## Releasing
+
+1. Bump `version` in `pyproject.toml` and add a `## <version>` section to `CHANGELOG.md`.
+2. Merge to `main`, then create a GitHub release tagged `v<version>`.
+3. The publish workflow first checks that the tag, the package version and the changelog agree, then runs
+   lint and the tests, and only then uploads to PyPI (after your approval on the `pypi` environment).
+
+`python scripts/check_release.py v<version>` runs the first check locally. PyPI never accepts a version twice,
+so the check exists to fail before anything is uploaded.
 
 ## License
 

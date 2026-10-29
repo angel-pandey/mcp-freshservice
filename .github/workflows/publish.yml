@@ -12,5 +12,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+
+      # PyPI never accepts the same version twice: stop before uploading if the tag, the package
+      # version and the changelog disagree.
+      - name: Check tag, version and changelog agree
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: uv run --python 3.13 --no-project python scripts/check_release.py "$TAG"
+
+      - name: Run the tests
+        run: |
+          uv sync --python 3.13
+          uv run ruff check .
+          uv run pytest
+
       - run: uv build
       - run: uv publish
