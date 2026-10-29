@@ -16,11 +16,15 @@ class Recorder:
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
+        self.sleeps: list[float] = []  # what the client asked to wait between retries
         self.handler: Callable[[httpx.Request], httpx.Response] = lambda r: httpx.Response(200, json={})
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
         return self.handler(request)
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
 
     @property
     def last(self) -> httpx.Request:
@@ -45,7 +49,11 @@ def make_server(api: Recorder):
         base = {"domain": "acme.freshservice.com", "api_key": "secret", "toolsets": frozenset({"all"})}
         server = build_server(Settings(**{**base, **settings}))
         # swap the real transport for the mock one
-        set_client(FreshserviceClient(Settings(**{**base, **settings}), transport=httpx.MockTransport(api)))
+        set_client(
+            FreshserviceClient(
+                Settings(**{**base, **settings}), transport=httpx.MockTransport(api), sleep=api.sleep
+            )
+        )
         return server
 
     yield factory

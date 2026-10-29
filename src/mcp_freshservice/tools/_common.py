@@ -33,7 +33,10 @@ CustomFields = Annotated[
 ]
 Attachments = Annotated[
     list[str] | None,
-    Field(description="Local file paths to attach (max 15 files / 40 MB total); sent as multipart/form-data"),
+    Field(
+        description="Local file paths to attach (max 15 files / 40 MB total). Only files inside the folders in "
+        "FRESHSERVICE_ATTACHMENT_DIRS are allowed; attachments are refused until that is set"
+    ),
 ]
 Priority = Annotated[int, Field(ge=1, le=4, description="1 Low, 2 Medium, 3 High, 4 Urgent")]
 Impact = Annotated[int, Field(ge=1, le=3, description="1 Low, 2 Medium, 3 High")]

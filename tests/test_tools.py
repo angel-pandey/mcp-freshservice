@@ -267,7 +267,8 @@ async def test_note_is_private_by_default_and_public_on_request(server, api):
     assert api.last_json()["private"] is False
 
 
-async def test_reply_with_attachment_uses_multipart(server, api, tmp_path):
+async def test_reply_with_attachment_uses_multipart(make_server, api, tmp_path):
+    server = make_server(attachment_dirs=(tmp_path.resolve(),))
     f = tmp_path / "log.txt"
     f.write_text("hello")
     api.reply(201, {"conversation": {"id": 1}})
@@ -281,9 +282,11 @@ async def test_reply_with_attachment_uses_multipart(server, api, tmp_path):
     assert 'name="attachments[]"; filename="log.txt"' in raw and 'name="cc_emails[]"' in raw
 
 
-async def test_missing_attachment_is_a_clear_error(server):
+async def test_missing_attachment_is_a_clear_error(make_server, tmp_path):
+    server = make_server(attachment_dirs=(tmp_path.resolve(),))
+    missing = str(tmp_path / "nope.txt")
     with pytest.raises(ToolError, match="not found"):
-        await call(server, "send_ticket_reply", {"ticket_id": 5, "body": "x", "attachments": ["/nope.txt"]})
+        await call(server, "send_ticket_reply", {"ticket_id": 5, "body": "x", "attachments": [missing]})
 
 
 async def test_delete_returns_success_marker(server, api):
